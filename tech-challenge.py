@@ -5,7 +5,7 @@ import numpy as np
 import os
 from deepface import DeepFace
 from tqdm import tqdm
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 
 class VideoAnalyzer:
     def __init__(self, video_path, output_path, face_images_folder="images"):
@@ -30,8 +30,11 @@ class VideoAnalyzer:
         
         # Activity recognition parameters
         self.prev_landmarks = None
-        self.activity_window = []
         self.activity_window_size = 30  # frames to consider for activity detection
+        self.activity_window = deque(maxlen=self.activity_window_size)
+
+        # Cache last emotion inference to avoid calling DeepFace every frame
+        self.last_emotion_results = []
     
     def load_face_encodings(self):
         """Load face encodings from the images folder."""
@@ -90,9 +93,9 @@ class VideoAnalyzer:
         left_wrist = landmarks[self.mp_pose.PoseLandmark.LEFT_WRIST]
         right_wrist = landmarks[self.mp_pose.PoseLandmark.RIGHT_WRIST]
         
-        # Check if either wrist is above the eyes
-        left_arm_up = left_wrist.y < left_eye.y
-        right_arm_up = right_wrist.y < right_eye.y
+        # Check if wrist and elbow are above corresponding shoulder / eye
+        left_arm_up = (left_wrist.y < left_eye.y) and (left_elbow.y < left_shoulder.y)
+        right_arm_up = (right_wrist.y < right_eye.y) and (right_elbow.y < right_shoulder.y)
         
         return left_arm_up or right_arm_up
     
@@ -102,12 +105,20 @@ class VideoAnalyzer:
         right_hip = landmarks[self.mp_pose.PoseLandmark.RIGHT_HIP]
         left_knee = landmarks[self.mp_pose.PoseLandmark.LEFT_KNEE]
         right_knee = landmarks[self.mp_pose.PoseLandmark.RIGHT_KNEE]
-        
-        # Check if knees are at similar height to hips (indicates sitting)
-        knee_hip_ratio_left = abs(left_knee.y - left_hip.y) / abs(left_hip.x - right_hip.x)
-        knee_hip_ratio_right = abs(right_knee.y - right_hip.y) / abs(left_hip.x - right_hip.x)
-        
-        return knee_hip_ratio_left < 1.0 or knee_hip_ratio_right < 1.0
+        left_shoulder = landmarks[self.mp_pose.PoseLandmark.LEFT_SHOULDER]
+        right_shoulder = landmarks[self.mp_pose.PoseLandmark.RIGHT_SHOULDER]
+
+        # Average positions for robustness
+        hip_y = (left_hip.y + right_hip.y) / 2
+        knee_y = (left_knee.y + right_knee.y) / 2
+        shoulder_y = (left_shoulder.y + right_shoulder.y) / 2
+
+        vertical_upper_leg = knee_y - hip_y
+        vertical_torso = shoulder_y - hip_y if shoulder_y - hip_y != 0 else 1e-5
+        ratio = vertical_upper_leg / vertical_torso
+
+        # Sitting if knees are close to hips vertically (small ratio)
+        return ratio < 0.3
     
     def is_significant_movement(self, current_landmarks):
         """Detect if there's significant movement between frames."""
@@ -127,7 +138,7 @@ class VideoAnalyzer:
         # Calculate movement of key points
         for point in key_points:
             curr = current_landmarks[point]  # Current landmarks are directly indexable
-            prev = self.prev_landmarks.landmark[point]  # Previous landmarks use the .landmark attribute
+            prev = self.prev_landmarks[point]
             
             # Calculate euclidean distance in 2D
             dist = np.sqrt((curr.x - prev.x)**2 + (curr.y - prev.y)**2)
@@ -137,7 +148,7 @@ class VideoAnalyzer:
         movement_score /= len(key_points)
         
         # Threshold for significant movement
-        return movement_score > 0.02
+        return movement_score > 0.05
     
     def analyze_video(self):
         """Process the video for face recognition, emotion analysis, and pose detection."""
@@ -159,10 +170,13 @@ class VideoAnalyzer:
         
         # Initialize the pose detector
         with self.mp_pose.Pose(
+            model_complexity=2,
             min_detection_confidence=0.5,
-            min_tracking_confidence=0.5) as pose:
+            min_tracking_confidence=0.7) as pose:
             
-            # Process each frame with progress bar
+            # Prepare MediaPipe face detector (used as fallback)
+            face_detection = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+
             for _ in tqdm(range(total_frames), desc="Processing video"):
                 ret, frame = cap.read()
                 if not ret:
@@ -182,10 +196,16 @@ class VideoAnalyzer:
                 current_activity = "Unknown"
                 if pose_results.pose_landmarks:
                     current_activity = self.detect_activity(pose_results.pose_landmarks.landmark)
-                    self.activities[current_activity] += 1
+
+                    # Temporal smoothing of activity
+                    self.activity_window.append(current_activity)
+                    smoothed_activity = Counter(self.activity_window).most_common(1)[0][0]
+
+                    current_activity = smoothed_activity
+                    self.activities[smoothed_activity] += 1
                     
                     # Update previous landmarks for next frame comparison
-                    self.prev_landmarks = pose_results.pose_landmarks
+                    self.prev_landmarks = pose_results.pose_landmarks.landmark
                     
                     # Draw pose landmarks on the frame
                     self.mp_drawing.draw_landmarks(
@@ -195,20 +215,39 @@ class VideoAnalyzer:
                         landmark_drawing_spec=self.mp_drawing_styles.get_default_pose_landmarks_style()
                     )
                 
-                # Find and identify faces in the frame
-                face_locations = face_recognition.face_locations(frame_rgb)
+                # Primary face detection with CNN model
+                face_locations = face_recognition.face_locations(frame_rgb, model="cnn")
+
+                # Fallback to MediaPipe Face Detection if no faces were found
+                if len(face_locations) == 0:
+                    detections = face_detection.process(frame_rgb)
+                    if detections.detections:
+                        for det in detections.detections:
+                            bbox = det.location_data.relative_bounding_box
+                            x1 = int(bbox.xmin * width)
+                            y1 = int(bbox.ymin * height)
+                            w = int(bbox.width * width)
+                            h = int(bbox.height * height)
+                            top = max(y1, 0)
+                            left = max(x1, 0)
+                            bottom = min(y1 + h, height)
+                            right = min(x1 + w, width)
+                            face_locations.append((top, right, bottom, left))
+
+                # Encode faces
                 face_encodings = face_recognition.face_encodings(frame_rgb, face_locations)
                 
-                # Try emotion detection with DeepFace
-                emotion_results = []
-                try:
-                    emotion_results = DeepFace.analyze(frame_rgb, actions=['emotion'], enforce_detection=False)
-                    # Ensure emotion_results is a list
-                    if not isinstance(emotion_results, list):
-                        emotion_results = [emotion_results]
-                except Exception as e:
-                    # Print error and continue if emotion detection fails
-                    pass
+                # Try emotion detection with DeepFace (every 3 frames)
+                if self.frame_count % 3 == 0:
+                    try:
+                        emotion_results = DeepFace.analyze(frame_rgb, actions=['emotion'], enforce_detection=False, detector_backend='mediapipe')
+                        if not isinstance(emotion_results, list):
+                            emotion_results = [emotion_results]
+                        self.last_emotion_results = emotion_results
+                    except Exception:
+                        emotion_results = self.last_emotion_results
+                else:
+                    emotion_results = self.last_emotion_results
                 
                 # Process recognized faces
                 for i, (top, right, bottom, left) in enumerate(face_locations):
