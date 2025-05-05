@@ -2,41 +2,57 @@ Video Analysis Summary
 =====================
 
 People Detected:
-- carlinhos: appeared in 10.8% of frames
-- ed: appeared in 8.1% of frames
-- Unknown: appeared in 6.6% of frames
+- Unknown: appeared in 49.7% of frames
+- carlinhos: appeared in 10.9% of frames
+- ed: appeared in 10.4% of frames
+- medico: appeared in 9.7% of frames
 - felix: appeared in 5.4% of frames
 - john: appeared in 5.4% of frames
-- paula: appeared in 1.7% of frames
+- paula: appeared in 4.5% of frames
+- paciente: appeared in 1.2% of frames
 
 Main Activities Detected:
-- Standing: 55.4% of activity time
-- Moving: 21.9% of activity time
-- Sitting: 13.3% of activity time
-- Raising arm: 9.4% of activity time
+- Sitting: 94.0% of activity time
+- Raising arm: 5.6% of activity time
+- Moving: 0.4% of activity time
 
 Emotions Detected per Person:
-- felix:
-  * happy: 90.1%
-- paula:
-  * neutral: 31.5%
-  * sad: 22.2%
-  * happy: 22.2%
-  * fear: 20.4%
 - Unknown:
-  * sad: 32.1%
-  * happy: 26.2%
-  * neutral: 21.7%
-  * fear: 18.1%
-- john:
-  * neutral: 66.1%
-  * happy: 33.9%
-- carlinhos:
-  * happy: 46.1%
-  * surprise: 26.4%
-  * fear: 12.2%
-  * neutral: 10.3%
+  * sad: 31.3%
+  * neutral: 25.5%
+  * fear: 14.9%
+  * angry: 13.9%
+  * happy: 10.9%
 - ed:
-  * neutral: 66.3%
-  * sad: 19.6%
-  * fear: 5.9%
+  * happy: 28.8%
+  * sad: 25.4%
+  * fear: 17.3%
+  * neutral: 15.6%
+  * angry: 13.0%
+- paula:
+  * sad: 27.8%
+  * neutral: 23.2%
+  * fear: 17.9%
+  * happy: 17.9%
+  * angry: 10.6%
+- medico:
+  * sad: 40.6%
+  * neutral: 32.2%
+  * happy: 15.8%
+  * fear: 6.8%
+- carlinhos:
+  * happy: 41.6%
+  * fear: 28.1%
+  * surprise: 18.2%
+  * angry: 6.6%
+- felix:
+  * happy: 63.5%
+  * fear: 16.6%
+  * neutral: 14.9%
+- paciente:
+  * neutral: 74.4%
+  * happy: 17.9%
+  * sad: 5.1%
+- john:
+  * fear: 92.8%
+  * neutral: 6.7%
